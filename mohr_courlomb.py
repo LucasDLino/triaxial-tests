@@ -101,6 +101,10 @@ class MohrCoulombModel:
         # Flags
         self.is_plastic = False
         self.is_fail = False
+        
+        # Tendência de dilatação (para cálculo de poropressão em ensaios não-drenados)
+        # Valor positivo = tendência de contração, negativo = tendência de dilatação
+        self.plastic_vol_tendency = 0.0
     
     def plfun(self, eps_p):
         """
@@ -164,6 +168,7 @@ class MohrCoulombModel:
         # Flags
         self.is_plastic = False
         self.is_fail = False
+        self.plastic_vol_tendency = 0.0  # Reset a cada passo
         
         # Incremento de deformação (calculado internamente)
         # IMPORTANTE: O modelo gerencia os incrementos, não a classe TriaxialTest
@@ -258,6 +263,9 @@ class MohrCoulombModel:
                     # dgamma ≈ (σ₁_trial - σ₁_return) / (2G)
                     dgamma = (pstrs_trial[0] - pstrs[0]) / (2.0 * self.G)
                     eps = eps_trial + 2 * cos_phi * dgamma
+                    
+                    # Para ψ = 0, não há tendência de dilatação
+                    self.plastic_vol_tendency = 0.0
                 else:
                     # Caso raro: Phi_trial > 0 mas σ₁_trial < σ₁_limit
                     # (pode ocorrer por arredondamento numérico)
@@ -268,7 +276,7 @@ class MohrCoulombModel:
                 self.is_fail = False
                 
             else:
-                # Formulação original para ψ ≠ 0
+                # Formulação original para ψ ≠ 0 (de Borst/Crisfield)
                 dgamma = 0
                 a = (4.0 * self.G * (1.0 + 1.0/3.0 * np.sin(self.phi) * np.sin(self.psi)) + 
                      4.0 * self.K * np.sin(self.phi) * np.sin(self.psi))
@@ -293,6 +301,11 @@ class MohrCoulombModel:
                 pstrs[1] = pstrs_trial[1] + (4.0/3.0 * self.G - 2.0 * self.K) * np.sin(self.psi) * dgamma # Sigma2
                 pstrs[2] = pstrs_trial[2] + (2.0 * self.G * (1.0 - 1.0/3.0 * np.sin(self.psi)) - 
                                               2.0 * self.K * np.sin(self.psi)) * dgamma  # Sigma3
+                
+                # Tendência de dilatação volumétrica: dεᵥᵖ = -sin(ψ) * dgamma
+                # Negativo = tendência a DILATAR (expandir)
+                # Positivo = tendência a CONTRAIR
+                self.plastic_vol_tendency = -np.sin(self.psi) * dgamma
             
             TOL = max(np.abs(pstrs)) * 1e-6
             

@@ -159,6 +159,7 @@ VALIDACAO COMPLETA DO MODELO MOHR-COULOMB
 
 1. **validacao_completa.png** - Curvas q vs eps_a, poropressao, hardening/softening
 2. **circulos_mohr_comparativo.png** - Circulos de Mohr para CD, CU, UU com envoltorias
+3. **comparacao_dilatancia.png** - Efeito de psi (dilatancia) no ensaio CD
 
 ---
 

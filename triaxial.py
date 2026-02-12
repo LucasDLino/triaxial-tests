@@ -37,9 +37,11 @@ class TriaxialTest:
             Tipo de ensaio ("CU", "CD" ou "UU")
         OCR : float, optional
             Over-Consolidation Ratio (padrão: 1.0 = normalmente consolidado)
-            OCR > 1: solo pré-adensado (sobreconsolidado)
-            OCR = 1: solo normalmente consolidado
-            Usado para definir histórico de tensões (p_c' = OCR × p'0)
+            ⚠️ NOTA: OCR é armazenado mas NÃO IMPLEMENTADO no modelo Mohr-Coulomb.
+            Para simular efeito de OCR, use ψ (dilatância) diferente:
+            - OCR ≈ 1 (NC): ψ = 0
+            - OCR > 1 (OC): ψ = φ/3 a φ/2
+            Ver ALGORITMO_TRIAXIAL.md seção 8 para detalhes.
         
         CONVENÇÃO DE SINAIS:
         -------------------
@@ -98,6 +100,10 @@ class TriaxialTest:
         self._undrained_failure_reached = False
         self._q_at_failure = 0.0
         self._stress_at_failure = None
+        
+        # NOVO: Acumulador de tendência de dilatação para CU/UU
+        # Usado para calcular efeito de ψ na poropressão
+        self._accumulated_dilation = 0.0
         
         # =====================================================================
         # INICIALIZAÇÃO DO ESTADO DE TENSÕES E DEFORMAÇÕES
@@ -223,22 +229,27 @@ class TriaxialTest:
         # Armazenar deformação volumétrica inicial (do confinamento)
         eps_v_inicial = np.trace(self.model.strain)
         
+        # Flag para substepping adaptativo em CU/UU
+        self._was_elastic = True  # Começa no regime elástico
+        
         for i in range(steps):
             if self.test_type == "CD":
                 # =====================================================================
                 # ENSAIO CD: Controle iterativo para manter σ3' = constante
                 # =====================================================================
-                # Usar MUITOS subpassos com correção proporcional limitada
+                # Para ψ ≠ 0, o modelo pode ter oscilações internas no return mapping.
+                # Usamos muitos subpassos e maior tolerância para absorver isso.
                 # =====================================================================
                 sigma3_target = self.sigma3_effective
                 
-                # Muitos subpassos para estabilidade com hardening/softening
+                # Muitos subpassos para incrementos pequenos
                 n_sub = 20
                 d_eps_sub = d_eps / n_sub
                 
-                # Manter valor de eps_r entre subpassos (continuidade)
+                # Inicializar eps_r
                 if not hasattr(self, '_eps_r_history'):
                     self._eps_r_history = -self.model.nu * d_eps_sub
+                
                 eps_r_base = self._eps_r_history
                 
                 for sub_idx in range(n_sub):
@@ -252,7 +263,7 @@ class TriaxialTest:
                         'eps_p': self.model.equivalent_plastic_strain
                     }
                     
-                    # Aplicar incremento inicial
+                    # Aplicar incremento
                     d_strain = np.array([
                         [d_eps_sub, 0, 0],
                         [0, eps_r_base, 0],
@@ -265,9 +276,9 @@ class TriaxialTest:
                     sigma3_atual = np.min(np.linalg.eigvalsh(stress))
                     erro = sigma3_atual - sigma3_target
                     
-                    # Correção iterativa (máximo 10 iterações)
+                    # Correção iterativa
                     for iter_count in range(10):
-                        if abs(erro) < 0.1:  # Tolerância 0.1 kPa
+                        if abs(erro) < 0.1:  # Tolerância
                             break
                         
                         # Restaurar estado
@@ -277,28 +288,23 @@ class TriaxialTest:
                         self.model.stress = model_backup['stress'].copy()
                         self.model.equivalent_plastic_strain = model_backup['eps_p']
                         
-                        # Correção de εr: se σ3 > target, precisamos de menos contração (εr mais positivo)
-                        # Usar sensibilidade elástica: dσ3/dεr ≈ 2G (para regime elástico)
-                        # No regime plástico, sensibilidade é MUITO menor para evitar oscilações
+                        # Sensibilidade para correção
                         G = self.model.E / (2 * (1 + self.model.nu))
-                        
-                        # Fator de relaxação progressivo para garantir convergência
-                        relaxation = 0.5 / (1 + iter_count * 0.2)  # Diminui a cada iteração
+                        relaxation = 0.5 / (1 + iter_count * 0.2)
                         
                         if self.model.is_plastic:
-                            # Plástico: usar sensibilidade muito baixa
                             sensitivity = 2 * G * 0.1 * relaxation
                         else:
                             sensitivity = 2 * G * relaxation
                             
                         delta_eps_r = -erro / sensitivity
                         
-                        # Limitar correção para estabilidade - mais conservador
+                        # Limitar correção
                         max_corr = 0.3 * abs(d_eps_sub)
                         delta_eps_r = np.clip(delta_eps_r, -max_corr, max_corr)
                         eps_r_base = eps_r_base + delta_eps_r
                         
-                        # Reaplicar com novo εr
+                        # Reaplicar
                         d_strain = np.array([
                             [d_eps_sub, 0, 0],
                             [0, eps_r_base, 0],
@@ -310,7 +316,7 @@ class TriaxialTest:
                         sigma3_atual = np.min(np.linalg.eigvalsh(stress))
                         erro = sigma3_atual - sigma3_target
                 
-                # Guardar eps_r para próximo passo (continuidade)
+                # Guardar eps_r para próximo passo
                 self._eps_r_history = eps_r_base
             else:
                 # CU/UU: usar método original (volume constante)
@@ -373,9 +379,49 @@ class TriaxialTest:
             
             # AJUSTE: Calcular poropressão e tensões totais
             if self.test_type == "CU" or self.test_type == "UU":
-                # Em CU/UU: σ3_total = constante (pressão de câmara)
-                # Poropressão: u = σ3_total - σ3'
-                u = self.sigma3_total - sigma3_prime
+                # =============================================================
+                # CÁLCULO DA POROPRESSÃO — O que é correto vs empírico
+                # =============================================================
+                # 
+                # ARTIFICIAL ≠ ERRADO. Algumas partes são fisicamente corretas,
+                # outras são aproximações empíricas. Ver ALGORITMO_TRIAXIAL.md
+                # seção 3.3 para explicação detalhada.
+                #
+                # RESUMO:
+                # -------
+                # ✅ u_base = σ3_total - σ3' → CORRETO (Terzaghi)
+                # ✅ plastic_vol_tendency    → CORRETO (vem do modelo)
+                # ⚠️ K_coupling = 10*σ3     → EMPÍRICO (deveria ser Kw da água)
+                # ⚠️ Suavização EMA         → NUMÉRICO (band-aid para saltos)
+                #
+                # COMO DEVERIA SER (implementação correta):
+                # -----------------------------------------
+                # O modelo deveria ter Kw como parâmetro e calcular:
+                # Δu = -Kw × Δεᵥ_tendência internamente no update()
+                #
+                # =============================================================
+                
+                # Acumular tendência de dilatação (✅ vem do modelo)
+                self._accumulated_dilation += self.model.plastic_vol_tendency
+                
+                # ✅ CORRETO: Poropressão básica (princípio de Terzaghi)
+                # σ = σ' + u  →  u = σ_total - σ'
+                u_base = self.sigma3_total - sigma3_prime
+                
+                # ⚠️ EMPÍRICO: Ajuste por dilatância
+                # K_coupling deveria ser Kw (módulo da água), não 10*σ3
+                K_coupling = 10.0 * self.sigma3_total
+                
+                # Rampa para ativar efeito gradualmente
+                eps_ref = 0.02
+                current_axial_strain = (i + 1) * d_eps
+                ramp_factor = np.tanh(current_axial_strain / eps_ref)
+                
+                delta_u_dilation = ramp_factor * K_coupling * self._accumulated_dilation
+                
+                # Poropressão final
+                u = u_base + delta_u_dilation
+                
                 sigma3_total = self.sigma3_total
                 sigma1_total = sigma1_prime + u  # σ1_total = σ1' + u
                 
@@ -423,3 +469,52 @@ class TriaxialTest:
             'q_sigma3_ratio': self.q_sigma3_ratio,
             'u_sigma3_ratio': self.u_sigma3_ratio
         })
+
+
+def smooth_results(results, window=5):
+    """
+    Aplica filtro de média móvel para suavizar oscilações nos resultados.
+    
+    Útil para ensaios CD com ψ ≠ 0 onde o return mapping pode causar
+    oscilações numéricas.
+    
+    Parameters:
+    -----------
+    results : TriaxialResults
+        Resultados do ensaio triaxial
+    window : int
+        Tamanho da janela de média móvel (default: 5)
+        
+    Returns:
+    --------
+    TriaxialResults
+        Resultados com dados suavizados
+    """
+    import numpy as np
+    
+    def moving_average(data, w):
+        """Calcula média móvel com janela w."""
+        arr = np.array(data)
+        if len(arr) < w:
+            return arr.tolist()
+        
+        # Padding nas bordas para manter tamanho
+        padded = np.pad(arr, (w//2, w//2), mode='edge')
+        cumsum = np.cumsum(padded)
+        smoothed = (cumsum[w:] - cumsum[:-w]) / w
+        return smoothed[:len(arr)].tolist()
+    
+    # Aplicar suavização nas grandezas que podem oscilar
+    smoothed = TriaxialResults({
+        'axial_strain': results['axial_strain'],  # Não suavizar
+        'q': moving_average(results['q'], window),
+        'p': moving_average(results['p'], window),
+        'volumetric_strain': moving_average(results['volumetric_strain'], window),
+        'sigma1': moving_average(results['sigma1'], window),
+        'sigma3': moving_average(results['sigma3'], window),
+        'pore_pressure': moving_average(results['pore_pressure'], window),
+        'q_sigma3_ratio': moving_average(results['q_sigma3_ratio'], window),
+        'u_sigma3_ratio': moving_average(results['u_sigma3_ratio'], window)
+    })
+    
+    return smoothed

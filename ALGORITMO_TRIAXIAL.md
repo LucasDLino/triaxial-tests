@@ -158,18 +158,110 @@ test = TriaxialTest(model, sigma3=100, test_type='CU')
 | **CU** | σ₃_total (câmara) | Após consolidação: σ₃' inicial = σ₃_total |
 | **UU** | σ₃_total (câmara) | σ₃' inicial = fixo (~1 kPa), u₀ = σ₃_total - σ₃' |
 
-### 3.3 Fórmula da Poropressão
+### 3.3 Cálculo da Poropressão — Limitações e Validade
 
-**Durante o cisalhamento não-drenado (CU/UU)**:
+> **O que significa "ARTIFICIAL" ou "PÓS-PROCESSAMENTO"?**
+>
+> Significa que a poropressão é calculada **fora** do modelo constitutivo, em `triaxial.py`.
+> O modelo `MohrCoulombModel` trabalha apenas com tensões efetivas (σ') e não conhece água.
+>
+> **ARTIFICIAL ≠ ERRADO**. Algumas partes são fisicamente corretas, outras são empíricas.
 
-A pressão de câmara σ₃_total permanece **constante** (controlada externamente). O modelo Mohr-Coulomb retorna tensões efetivas σ'. A poropressão é calculada por:
+### 3.3.1 Fluxo de Cálculo Detalhado
 
-$$u = \sigma_{3,total} - \sigma_3'$$
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASSO 1: Impor condição não-drenada (triaxial.py)                 │
+│  ─────────────────────────────────────────────────────────────────  │
+│  εᵥ = 0  →  εᵣ = -εₐ/2  (volume constante)                        │
+│                                                                     │
+│  ENTRADA para o modelo: tensor de deformações ε                     │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASSO 2: Modelo constitutivo (mohr_courlomb.py)                   │
+│  ─────────────────────────────────────────────────────────────────  │
+│  stress = model.update(total_strain)                                │
+│                                                                     │
+│  SAÍDA do modelo:                                                   │
+│  • σ' (tensor de tensões EFETIVAS)                                  │
+│  • plastic_vol_tendency = -sin(ψ) × Δγ  (tendência volumétrica)     │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASSO 3: Calcular poropressão básica (triaxial.py)                │
+│  ─────────────────────────────────────────────────────────────────  │
+│  u_base = σ3_total - σ3'                                           │
+│                                                                     │
+│  ✅ FISICAMENTE CORRETO (princípio de Terzaghi: σ = σ' + u)        │
+│                                                                     │
+│  ENTRADAS:                                                          │
+│  • σ3_total: constante da câmara (definido pelo usuário)           │
+│  • σ3': vem do modelo (passo 2)                                     │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASSO 4: Ajuste por dilatância (triaxial.py)                      │
+│  ─────────────────────────────────────────────────────────────────  │
+│  accumulated_dilation += plastic_vol_tendency                       │
+│  delta_u = K_coupling × accumulated_dilation                        │
+│  u_raw = u_base + delta_u                                           │
+│                                                                     │
+│  ⚠️ PARCIALMENTE EMPÍRICO                                          │
+│  • plastic_vol_tendency vem do modelo (correto)                     │
+│  • K_coupling = 10 × σ3 é ARBITRÁRIO (calibrado visualmente)       │
+│                                                                     │
+│  ENTRADA: plastic_vol_tendency do modelo                            │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-Onde:
-- **σ₃_total**: Valor fornecido pelo usuário (pressão de câmara, constante)
-- **σ₃'**: Calculado pelo modelo Mohr-Coulomb (varia durante o ensaio)
-- **u**: Poropressão resultante (cresce durante carregamento não-drenado)
+**NOTA**: A transição elástico→plástico pode causar saltos na poropressão
+devido ao return mapping. Isso é um artefato numérico, não física real.
+
+### 3.3.2 Resumo: O que é correto vs empírico
+
+| Componente | Status | Justificativa |
+|------------|--------|---------------|
+| `u_base = σ3_total - σ3'` | ✅ Correto | Princípio de Terzaghi |
+| `plastic_vol_tendency` | ✅ Correto | Vem do modelo (fluxo plástico) |
+| `K_coupling = 10 × σ3` | ⚠️ Empírico | Valor arbitrário, deveria vir de Kw da água |
+
+### 3.3.3 Por que K_coupling é arbitrário?
+
+Na física real, quando o solo tende a dilatar mas εᵥ=0:
+
+$$\Delta u = -K_w \cdot \Delta\varepsilon_v^{tendência}$$
+
+Onde **Kw** é o módulo de compressibilidade da água (~2.2 GPa para água pura, mas muito menor para água com ar dissolvido). O valor correto depende do grau de saturação e propriedades do fluido.
+
+O código usa `K_coupling = 10 × σ3` como **aproximação empírica** porque:
+- Não temos Kw como parâmetro de entrada
+- O valor foi calibrado para produzir resultados qualitativamente corretos
+
+### 3.3.4 Como DEVERIA ser implementado (corretamente)
+
+```python
+# Dentro de MohrCoulombModel.__init__()
+self.Kw = 2.2e6  # Módulo da água (kPa), ou receber como parâmetro
+self.is_undrained = False
+self.pore_pressure = 0.0
+
+# Dentro de MohrCoulombModel.update()
+if self.is_undrained:
+    # Tendência volumétrica do fluxo plástico
+    delta_eps_v_tendency = -sin(psi) * dgamma
+    
+    # Poropressão gerada pela água resistindo à dilatação
+    delta_u = -self.Kw * delta_eps_v_tendency
+    self.pore_pressure += delta_u
+    
+    # Retroalimentação: u afeta σ' que afeta próxima iteração
+```
+
+Isso eliminaria todo o pós-processamento e daria valores fisicamente fundamentados.
 
 ### 3.4 Exemplo Numérico (CU)
 
@@ -362,7 +454,22 @@ A dilatância (ψ) é um **parâmetro do material** que descreve a tendência do
 | ψ = 0 | Volume constante | Argila NC, areia fofa |
 | ψ < 0 | Contrai | Solo muito fofo |
 
-### 8.2 Dilatância em Cada Tipo de Ensaio
+### 8.2 Relação entre OCR e Dilatância
+
+O **OCR** (Over-Consolidation Ratio) indica se o solo já foi submetido a tensões maiores que as atuais:
+
+| OCR | Estado | Comportamento típico | ψ sugerido |
+|-----|--------|---------------------|------------|
+| OCR = 1 | Normalmente consolidado (NC) | Contrai ou volume constante | ψ = 0 |
+| OCR = 1.5-2 | Levemente OC | Dilata moderadamente | ψ = φ/3 |
+| OCR > 4 | Fortemente OC | Dilata significativamente | ψ = φ/2 |
+
+**IMPORTANTE**: O modelo de Mohr-Coulomb **não captura diretamente** o efeito do OCR. Para modelar solo OC vs NC:
+
+1. **Abordagem simplificada** (usada aqui): Variar ψ conforme tabela acima
+2. **Abordagem rigorosa**: Usar modelo com cap (Cam-Clay, Cap Model)
+
+### 8.3 Dilatância em Cada Tipo de Ensaio
 
 | Ensaio | Volume livre? | Efeito de ψ |
 |--------|---------------|-------------|
@@ -370,36 +477,81 @@ A dilatância (ψ) é um **parâmetro do material** que descreve a tendência do
 | **CU** | ❌ Não (εᵥ = 0) | ψ afeta redistribuição de tensões → poropressão |
 | **UU** | ❌ Não (εᵥ = 0) | Mesmo que CU |
 
-### 8.3 Por Que Usamos ψ = 0 na Validação?
+### 8.4 Por Que Usamos ψ = 0 na Validação Principal?
 
-1. **Simplicidade numérica**: ψ = 0 evita problemas no return mapping clássico
-2. **Representativo para argilas**: Argilas saturadas normalmente consolidadas têm ψ ≈ 0
+1. **Estabilidade numérica**: ψ ≠ 0 pode causar oscilações no return mapping clássico
+   - Para validação analítica, ψ = 0 dá resultados mais limpos
+2. **Representativo para argilas NC**: Argilas saturadas normalmente consolidadas têm ψ ≈ 0
 3. **Conservador**: ψ = 0 é a hipótese mais conservadora (sem dilatância)
 
-### 8.4 Quando Usar ψ ≠ 0?
+**NOTA**: A função `comparar_dilatancia()` demonstra o efeito de ψ > 0 nos ensaios CD e CU.
 
-Para **areias densas** ou **argilas pré-adensadas**, seria necessário:
-- ψ = φ/3 (aproximação comum para areias)
-- ψ = φ (plasticidade associada - limite superior)
+### 8.5 Efeitos Práticos de ψ ≠ 0
 
 **No ensaio CD com ψ > 0**:
 - O solo dilata durante cisalhamento
 - εᵥ aumenta (expansão volumétrica)
 - O controle iterativo de σ₃ ajusta ε_r automaticamente
+- **Este efeito é capturado pelo modelo atual** ✓
 
-**No ensaio CU com ψ > 0**:
-- O solo "quer" dilatar mas não pode (εᵥ = 0 forçado)
-- Isso gera **poropressão negativa** (sucção)
-- O modelo calcula σ₃' maior → u = σ₃_total - σ₃' pode ser negativo
+**⚠️ Ensaios CU/UU com ψ ≠ 0: ACOPLAMENTO ARTIFICIAL**
 
-### 8.5 Resumo
+> **LIMITAÇÃO**: O cálculo descrito abaixo é **PÓS-PROCESSAMENTO ARTIFICIAL**.
+> A poropressão não vem do modelo — é calculada em `triaxial.py`.
+> Veja seção 3.3.1 para detalhes.
 
-A dilatância é uma propriedade do **material**, não do ensaio. A escolha de ψ depende do solo que está sendo modelado:
+Formulação atual (empírica):
+1. O return mapping calcula `plastic_vol_tendency = -sin(ψ) * dgamma`
+2. Valor negativo = tendência a DILATAR
+3. Em CU/UU, acumulamos essa tendência ao longo do ensaio
+4. Ajuste de poropressão: `Δu_dil = K_coupling * tendência_acumulada`
+5. Onde `K_coupling = 10 * σ3_total` — valor **ARBITRÁRIO**, não tem base física rigorosa
+
+Efeito prático:
+- ψ = 0 (solo NC): u aumenta normalmente (comportamento padrão)
+- ψ > 0 (solo OC): u aumenta MENOS (tendência dilatante "alivia" pressão)
+- ψ ≥ 18°: **u pode ficar NEGATIVO** (sucção em solo muito dilatante)
+
+**⚠️ Poropressão negativa — ARTIFICIAL**
+
+Com ψ alto (≥ 18°), representando areia muito densa ou argila fortemente OC:
+- ψ = 18°: u_final ≈ -79 kPa
+- ψ = 22°: u_final ≈ -101 kPa
+
+**ATENÇÃO**: Esses valores dependem de `K_coupling` arbitrário. Uma implementação correta
+calcularia u dentro do modelo com formulação hidromecânica acoplada (não implementada).
+
+Ver função `demonstrar_poropressao_negativa()` em validacao.py.
+
+**Implicação prática**: Use ψ ≠ 0 apenas para **ensaios CD** nesta implementação.
+
+**No ensaio UU com ψ > 0** (teórico, não implementado):
+- Efeito similar ao CU
+- Porém o estado inicial já tem alta poropressão
+- A poropressão pode diminuir durante cisalhamento (tendência dilatante)
+
+### 8.6 Quando Usar Cada Valor de ψ
 
 ```
-Argila NC saturada:     ψ ≈ 0
-Argila OC / Areia densa: ψ = φ/3 a φ/2
-Validação numérica:      ψ = 0 (simplifica implementação)
+┌─────────────────────────────────────────────────────────────┐
+│ GUIA PRÁTICO PARA ESCOLHA DE ψ                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Argila NC saturada (OCR ≈ 1):        ψ = 0                │
+│                                                             │
+│  Argila levemente OC (OCR = 1.5-2):   ψ = φ/3              │
+│                                                             │
+│  Argila fortemente OC (OCR > 4):      ψ = φ/2              │
+│                                                             │
+│  Areia fofa:                          ψ = 0                │
+│                                                             │
+│  Areia densa/média:                   ψ = φ/3 a φ/2        │
+│                                                             │
+│  Validação numérica vs analítica:     ψ = 0 (simplifica)   │
+│                                                             │
+│  Plasticidade associada (limite):     ψ = φ (NÃO realista) │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---

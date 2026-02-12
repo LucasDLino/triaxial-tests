@@ -451,6 +451,208 @@ def plotar_resultados(r_cd, r_cu, r_uu, r_hard, r_soft, q_teo_cd, sigma3):
     plt.show()
 
 
+def comparar_dilatancia(E, nu, phi_deg, cohesion, sigma3):
+    """
+    Compara efeito da dilatancia nos ensaios CD e CU.
+    
+    NOVIDADE: Com a implementacao de acoplamento simplificado,
+    psi agora tambem afeta a poropressao em ensaios CU!
+    
+    Relacao com OCR:
+    - OCR = 1 (NC): psi = 0 (solo contrai ou volume constante)
+    - OCR > 1 (OC): psi > 0 (solo dilata, u diminui)
+    """
+    print("\n" + "="*60)
+    print("COMPARACAO DE DILATANCIA (CD e CU)")
+    print("="*60)
+    print("\nRelacao psi - OCR:")
+    print("  - Solo NC (OCR=1): psi = 0 -> u aumenta normalmente")
+    print("  - Solo OC (OCR>1): psi > 0 -> u aumenta menos (ou diminui)")
+    
+    # Valores de dilatancia a comparar
+    psi_values = [0, phi_deg/3, phi_deg/2]
+    psi_labels = ['psi=0 (NC)', f'psi={phi_deg/3:.0f} (OC leve)', f'psi={phi_deg/2:.0f} (OC forte)']
+    colors = ['blue', 'green', 'red']
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    fig.suptitle(f'Efeito da Dilatancia (psi) nos Ensaios CD e CU\n'
+                 f'E={E} kPa, phi={phi_deg} graus, c={cohesion} kPa, sigma3={sigma3} kPa',
+                 fontsize=12)
+    
+    resultados_cd = []
+    resultados_cu = []
+    
+    for psi_deg_val, label, color in zip(psi_values, psi_labels, colors):
+        # Ensaio CD
+        model_cd = MohrCoulombModel(E=E, nu=nu, phi_deg=phi_deg, 
+                                    cohesion=cohesion, psi_deg=psi_deg_val)
+        test_cd = TriaxialTest(model_cd, sigma3=sigma3, test_type='CD')
+        r_cd = test_cd.run(eps_max=0.10, steps=100)
+        
+        # Ensaio CU
+        model_cu = MohrCoulombModel(E=E, nu=nu, phi_deg=phi_deg, 
+                                    cohesion=cohesion, psi_deg=psi_deg_val)
+        test_cu = TriaxialTest(model_cu, sigma3=sigma3, test_type='CU')
+        r_cu = test_cu.run(eps_max=0.10, steps=100)
+        
+        resultados_cd.append({
+            'psi': psi_deg_val,
+            'label': label,
+            'color': color,
+            'r': r_cd,
+            'q_max': max(r_cd['q']),
+            'eps_v_max': max(r_cd['volumetric_strain']) * 100
+        })
+        
+        resultados_cu.append({
+            'psi': psi_deg_val,
+            'label': label,
+            'color': color,
+            'r': r_cu,
+            'q_max': max(r_cu['q']),
+            'u_final': r_cu['pore_pressure'][-1]
+        })
+        
+        print(f"\n{label}:")
+        print(f"  CD: q_max = {max(r_cd['q']):.1f} kPa, eps_v_max = {max(r_cd['volumetric_strain'])*100:.2f}%")
+        print(f"  CU: q_max = {max(r_cu['q']):.1f} kPa, u_final = {r_cu['pore_pressure'][-1]:.1f} kPa")
+    
+    # Plot 1: CD - q vs eps_a
+    ax = axes[0, 0]
+    for res in resultados_cd:
+        eps_a = np.array(res['r']['axial_strain']) * 100
+        q = res['r']['q']
+        ax.plot(eps_a, q, color=res['color'], linewidth=2, label=res['label'])
+    ax.set_xlabel('Deformacao axial (%)')
+    ax.set_ylabel('q (kPa)')
+    ax.set_title('CD: Tensao desviadora')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # Plot 2: CD - eps_v vs eps_a
+    ax = axes[0, 1]
+    for res in resultados_cd:
+        eps_a = np.array(res['r']['axial_strain']) * 100
+        eps_v = np.array(res['r']['volumetric_strain']) * 100
+        ax.plot(eps_a, eps_v, color=res['color'], linewidth=2, label=res['label'])
+    ax.set_xlabel('Deformacao axial (%)')
+    ax.set_ylabel('Deformacao volumetrica (%)')
+    ax.set_title('CD: Dilatacao volumetrica')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+    
+    # Plot 3: CU - q vs eps_a
+    ax = axes[1, 0]
+    for res in resultados_cu:
+        eps_a = np.array(res['r']['axial_strain']) * 100
+        q = res['r']['q']
+        ax.plot(eps_a, q, color=res['color'], linewidth=2, label=res['label'])
+    ax.set_xlabel('Deformacao axial (%)')
+    ax.set_ylabel('q (kPa)')
+    ax.set_title('CU: Tensao desviadora')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # Plot 4: CU - poropressao vs eps_a (NOVO!)
+    ax = axes[1, 1]
+    for res in resultados_cu:
+        eps_a = np.array(res['r']['axial_strain']) * 100
+        u = np.array(res['r']['pore_pressure'])
+        ax.plot(eps_a, u, color=res['color'], linewidth=2, label=res['label'])
+    ax.set_xlabel('Deformacao axial (%)')
+    ax.set_ylabel('Poropressao u (kPa)')
+    ax.set_title('CU: Poropressao (efeito de dilatancia!)')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    plt.savefig('comparacao_dilatancia.png', dpi=150, bbox_inches='tight')
+    print(f"\nGrafico salvo: comparacao_dilatancia.png")
+    plt.show()
+
+
+def demonstrar_poropressao_negativa(E, nu, phi_deg, cohesion, sigma3):
+    """
+    Demonstra caso de poropressao NEGATIVA em solo fortemente dilatante.
+    
+    Isso representa um solo fortemente pré-adensado (OCR alto) ou
+    areia muito densa, onde a tendência de dilatação é tão forte
+    que gera sucção durante cisalhamento não-drenado.
+    """
+    print("\n" + "="*60)
+    print("DEMONSTRACAO: POROPRESSAO NEGATIVA")
+    print("="*60)
+    print("\nSolo fortemente dilatante (areia densa / argila muito OC)")
+    print("Parametros: psi >= 18 graus (dilatancia alta)")
+    
+    # Valores de dilatância que incluem caso negativo
+    psi_values = [0, 12, 18, 22]
+    psi_labels = ['psi=0 (NC)', 'psi=12 (OC)', 'psi=18 (OC forte)', 'psi=22 (muito OC)']
+    colors = ['blue', 'green', 'orange', 'red']
+    
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(f'Poropressao Negativa em Solo Dilatante (CU)\n'
+                 f'E={E} kPa, phi={phi_deg} graus, c={cohesion} kPa, sigma3={sigma3} kPa',
+                 fontsize=12)
+    
+    resultados = []
+    
+    for psi_deg_val, label, color in zip(psi_values, psi_labels, colors):
+        model = MohrCoulombModel(E=E, nu=nu, phi_deg=phi_deg, 
+                                cohesion=cohesion, psi_deg=psi_deg_val)
+        test = TriaxialTest(model, sigma3=sigma3, test_type='CU')
+        r = test.run(eps_max=0.15, steps=150)
+        
+        u_min = min(r['pore_pressure'])
+        u_final = r['pore_pressure'][-1]
+        
+        resultados.append({
+            'psi': psi_deg_val,
+            'label': label,
+            'color': color,
+            'r': r,
+            'u_min': u_min,
+            'u_final': u_final
+        })
+        
+        status = "NEGATIVO!" if u_min < 0 else ""
+        print(f"\n{label}:")
+        print(f"  u_min = {u_min:.1f} kPa, u_final = {u_final:.1f} kPa {status}")
+    
+    # Plot 1: Poropressao vs eps_a
+    ax = axes[0]
+    for res in resultados:
+        eps_a = np.array(res['r']['axial_strain']) * 100
+        u = np.array(res['r']['pore_pressure'])
+        ax.plot(eps_a, u, color=res['color'], linewidth=2, label=res['label'])
+    ax.set_xlabel('Deformacao axial (%)')
+    ax.set_ylabel('Poropressao u (kPa)')
+    ax.set_title('Evolucao da poropressao')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=0, color='k', linestyle='--', linewidth=2, alpha=0.7)
+    ax.fill_between([0, 15], [0, 0], [-50, -50], alpha=0.1, color='cyan', label='Succao')
+    
+    # Plot 2: q vs eps_a
+    ax = axes[1]
+    for res in resultados:
+        eps_a = np.array(res['r']['axial_strain']) * 100
+        q = res['r']['q']
+        ax.plot(eps_a, q, color=res['color'], linewidth=2, label=res['label'])
+    ax.set_xlabel('Deformacao axial (%)')
+    ax.set_ylabel('q (kPa)')
+    ax.set_title('Tensao desviadora')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('poropressao_negativa.png', dpi=150, bbox_inches='tight')
+    print(f"\nGrafico salvo: poropressao_negativa.png")
+    plt.show()
+
+
 def main():
     """Executa validacao completa."""
     print("\n" + "="*60)
@@ -510,6 +712,13 @@ def main():
     # Gráficos
     plotar_resultados(r_cd, r_cu, r_uu, r_hard, r_soft, q_teo, sigma3)
     plotar_circulos_mohr_comparativo(r_cd_list, r_cu_list, r_uu, phi_deg, cohesion)
+    
+    # Comparação de dilatância (efeito de OCR simulado via ψ)
+    # Agora mostra efeito de ψ na poropressão em ensaios CU!
+    comparar_dilatancia(E, nu, phi_deg, cohesion, sigma3)
+    
+    # Demonstração de poropressão negativa (solo muito dilatante)
+    demonstrar_poropressao_negativa(E, nu, phi_deg, cohesion, sigma3)
     
     print("\n" + "="*60)
     print("VALIDACAO CONCLUIDA COM SUCESSO!")
