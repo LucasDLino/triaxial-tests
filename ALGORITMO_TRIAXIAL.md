@@ -407,19 +407,73 @@ Isso significa que o **modelo constitutivo é completamente substituível**. Se 
 
 ---
 
-## 6. Correção do Return Mapping para ψ = 0
+## 6. Return Mapping: Equações Implementadas
 
-### 6.1 O Problema Original
+### 6.1 Função de Escoamento (Yield Check)
 
-A formulação clássica de return mapping assume ψ ≠ 0. Com ψ = 0, ocorrem inversões numéricas inválidas.
+O código verifica admissibilidade plástica usando a forma **compressão positiva** (com `sign_conv = -1`):
 
-### 6.2 A Solução
+$$\Phi = (\sigma_1 - \sigma_3) - (\sigma_1 + \sigma_3)\sin\phi - 2c\cos\phi$$
 
-Para ψ = 0, projeta-se σ₁ diretamente para a superfície de ruptura mantendo σ₃ fixo:
+Que equivale a:
 
-$$\sigma_1^{limite} = K_p \cdot \sigma_3 + 2c\sqrt{K_p}$$
+$$\Phi = \sigma_1(1 - \sin\phi) - \sigma_3(1 + \sin\phi) - 2c\cos\phi$$
 
-$$K_p = \frac{1 + \sin(\phi')}{1 - \sin(\phi')}$$
+Dividindo por $(1 - \sin\phi)$, obtemos a forma $K_p$ (equivalente):
+
+$$f = \sigma_1 - K_p \cdot \sigma_3 - 2c\sqrt{K_p} = 0$$
+
+Onde:
+$$K_p = \frac{1 + \sin\phi}{1 - \sin\phi}, \quad \sqrt{K_p} = \frac{\cos\phi}{1 - \sin\phi}$$
+
+Se $\Phi > 0$, o estado trial está fora da superfície e o return mapping é ativado.
+
+### 6.2 Return Mapping (de Borst/Crisfield — formulação unificada para todo ψ)
+
+> **CORREÇÃO APLICADA**: As fórmulas originais de de Borst/Crisfield assumem convenção
+> **tração positiva**. Para **compressão positiva** (convenção geotécnica), é necessário
+> aplicar `sign_conv` aos termos sinφ e sinψ no numerador, nas atualizações de tensão,
+> e nos termos do 2-vector return. Definimos:
+> $$\hat{\sin\phi} = \text{sign\_conv} \cdot \sin\phi, \quad \hat{\sin\psi} = \text{sign\_conv} \cdot \sin\psi$$
+> onde `sign_conv = -1` para compressão positiva.
+
+> **NOTA sobre ψ = 0 em geometria triaxial**: Quando σ₂ = σ₃ (ensaio triaxial), o
+> 1-vector return com ψ = 0 produz σ₃_return > σ₂_return (viola a ordenação σ₁ ≥ σ₂ ≥ σ₃).
+> Isso faz o algoritmo cair automaticamente no 2-vector return, que trata o caso
+> corretamente. Não há necessidade de tratamento especial para ψ = 0.
+
+#### 6.2.1 1-Vector Return (Main Plane)
+
+Coeficiente de rigidez (invariante à convenção, pois $\text{sc}^2 = 1$):
+$$a = 4G\left(1 + \frac{\sin\phi \cdot \sin\psi}{3}\right) + 4K \sin\phi \sin\psi$$
+
+Multiplicador plástico (com convenção compressão positiva):
+$$\Delta\gamma = \frac{(1-\sin\phi)\sigma_1^{trial} - (1+\sin\phi)\sigma_3^{trial} - 2\cos\phi \cdot c}{a + 4H\cos^2\phi}$$
+
+> Nota: o numerador é idêntico ao valor de $\Phi_{trial}$ (yield check).
+
+Atualização das tensões principais (compressão positiva):
+$$\sigma_1 = \sigma_1^{trial} - \left[2G\left(1 - \frac{\sin\psi}{3}\right) - 2K\sin\psi\right] \Delta\gamma$$
+$$\sigma_2 = \sigma_2^{trial} - \left(\frac{4G}{3} - 2K\right)\sin\psi \cdot \Delta\gamma$$
+$$\sigma_3 = \sigma_3^{trial} + \left[2G\left(1 + \frac{\sin\psi}{3}\right) + 2K\sin\psi\right] \Delta\gamma$$
+
+Tendência volumétrica plástica:
+$$\Delta\varepsilon_v^{p,tend} = -\sin\psi \cdot \Delta\gamma$$
+
+#### 6.2.2 2-Vector Return (Edge)
+
+Se o 1-vector return produz $\sigma_1 < \sigma_2$ ou $\sigma_2 < \sigma_3$, ativa-se o return à aresta (edge) da superfície, com dois multiplicadores $\Delta\gamma_A$ e $\Delta\gamma_B$. A formulação segue o mesmo padrão, com `sign_conv` aplicado aos termos sinφ nos cálculos de sigmaA/sigmaB e sinψ nas atualizações de tensão.
+
+#### 6.2.3 Multi-Vector Return (Apex)
+
+Se o 2-vector return também falha a condição $\sigma_1 \geq \sigma_2 \geq \sigma_3$, retorna-se ao ápice do cone:
+
+$$\sigma_1 = \sigma_2 = \sigma_3 = p^{trial} - K \cdot \Delta\varepsilon_v$$
+
+Onde:
+$$\Delta\varepsilon_v = \frac{p^{trial} - \cot\phi \cdot c}{\cot\phi \cdot \alpha \cdot H + K}, \quad \alpha = \frac{\cos\phi}{\sin\psi}$$
+
+O apex return é independente da convenção de sinais (estado hidrostático).
 
 ---
 
@@ -477,58 +531,56 @@ O **OCR** (Over-Consolidation Ratio) indica se o solo já foi submetido a tensõ
 | **CU** | ❌ Não (εᵥ = 0) | ψ afeta redistribuição de tensões → poropressão |
 | **UU** | ❌ Não (εᵥ = 0) | Mesmo que CU |
 
-### 8.4 Por Que Usamos ψ = 0 na Validação Principal?
+### 8.4 Validação com ψ = 0 e ψ ≠ 0
 
-1. **Estabilidade numérica**: ψ ≠ 0 pode causar oscilações no return mapping clássico
-   - Para validação analítica, ψ = 0 dá resultados mais limpos
-2. **Representativo para argilas NC**: Argilas saturadas normalmente consolidadas têm ψ ≈ 0
-3. **Conservador**: ψ = 0 é a hipótese mais conservadora (sem dilatância)
+A suite de verificação (`validacao.py`) testa **ambos** os casos:
 
-**NOTA**: A função `comparar_dilatancia()` demonstra o efeito de ψ > 0 nos ensaios CD e CU.
+- **ψ = 0**: Validação analítica contra solução exata de Mohr-Coulomb (q = σ₃(Kp−1) + 2c√Kp)
+- **ψ ≠ 0**: Verifica que q permanece constante (independe de ψ em CD), que εv dilata monotonicamente com ψ, e que Φ(σ_return) = 0
+
+Todos os valores de ψ (incluindo ψ = 0) usam a **mesma formulação de Borst/Crisfield**.
+Para ψ = 0, o 1-vector return cai automaticamente no 2-vector em geometria triaxial
+(ver nota na seção 6.2). Isso garante continuidade do modelo ao variar ψ.
 
 ### 8.5 Efeitos Práticos de ψ ≠ 0
 
-**No ensaio CD com ψ > 0**:
+**No ensaio CD com ψ > 0** (ver `comparacao_dilatancia.png`, linha superior):
 - O solo dilata durante cisalhamento
-- εᵥ aumenta (expansão volumétrica)
+- εᵥ aumenta (expansão volumétrica), proporcional a ψ
+- q permanece ≈ constante (independe de ψ, pois q depende apenas de φ e c)
 - O controle iterativo de σ₃ ajusta ε_r automaticamente
-- **Este efeito é capturado pelo modelo atual** ✓
+- **Este efeito é capturado corretamente pelo modelo atual** ✓
 
-**⚠️ Ensaios CU/UU com ψ ≠ 0: ACOPLAMENTO ARTIFICIAL**
+**No ensaio CU com ψ > 0** (ver `comparacao_dilatancia.png`, linha inferior):
 
-> **LIMITAÇÃO**: O cálculo descrito abaixo é **PÓS-PROCESSAMENTO ARTIFICIAL**.
-> A poropressão não vem do modelo — é calculada em `triaxial.py`.
-> Veja seção 3.3.1 para detalhes.
+> **⚠️ LIMITAÇÃO FUNDAMENTAL DO MC COM ψ CONSTANTE EM CU**
+>
+> O modelo de Mohr-Coulomb com ψ constante **não possui estado crítico** em CU.
+> O acoplamento dilatante faz σ₃' crescer sem limite, resultando em:
+> - q crescente sem estabilização
+> - u cada vez mais negativo (→ -∞)
+>
+> **Isso não é comportamento físico real** — é consequência do modelo.
 
-Formulação atual (empírica):
+Mecanismo:
 1. O return mapping calcula `plastic_vol_tendency = -sin(ψ) * dgamma`
 2. Valor negativo = tendência a DILATAR
-3. Em CU/UU, acumulamos essa tendência ao longo do ensaio
+3. Em CU (εᵥ = 0), acumulamos essa tendência ao longo do ensaio
 4. Ajuste de poropressão: `Δu_dil = K_coupling * tendência_acumulada`
-5. Onde `K_coupling = 10 * σ3_total` — valor **ARBITRÁRIO**, não tem base física rigorosa
+5. Onde `K_coupling = 10 * σ3_total` — valor **empírico**
+6. σ₃' = σ₃_total - u cresce sem limite → q = f(σ₃') também cresce
 
-Efeito prático:
-- ψ = 0 (solo NC): u aumenta normalmente (comportamento padrão)
-- ψ > 0 (solo OC): u aumenta MENOS (tendência dilatante "alivia" pressão)
-- ψ ≥ 18°: **u pode ficar NEGATIVO** (sucção em solo muito dilatante)
+Efeito prático observado nas simulações:
+- ψ = 0: u_final ≈ +54 kPa (NC, positivo, correto)
+- ψ = 2°: u_final ≈ -45 kPa, q ≈ 352 kPa
+- ψ = 5°: u_final ≈ -176 kPa, q ≈ 606 kPa
 
-**⚠️ Poropressão negativa — ARTIFICIAL**
+**Combinar softening + ψ > 0 NÃO resolve o problema**: o efeito de ψ domina
+completamente. Testado: softening c:40→20 + ψ=2° produz resultado **idêntico**
+a ψ=2° sem softening (q_max = q_end = 351.9 kPa).
 
-Com ψ alto (≥ 18°), representando areia muito densa ou argila fortemente OC:
-- ψ = 18°: u_final ≈ -79 kPa
-- ψ = 22°: u_final ≈ -101 kPa
-
-**ATENÇÃO**: Esses valores dependem de `K_coupling` arbitrário. Uma implementação correta
-calcularia u dentro do modelo com formulação hidromecânica acoplada (não implementada).
-
-Ver função `demonstrar_poropressao_negativa()` em validacao.py.
-
-**Implicação prática**: Use ψ ≠ 0 apenas para **ensaios CD** nesta implementação.
-
-**No ensaio UU com ψ > 0** (teórico, não implementado):
-- Efeito similar ao CU
-- Porém o estado inicial já tem alta poropressão
-- A poropressão pode diminuir durante cisalhamento (tendência dilatante)
+**Implicação prática**: Para modelar OC em CU (pico + queda), use **softening
+de coesão** com ψ = 0 (seção 8.7). Use ψ ≠ 0 apenas para **ensaios CD**.
 
 ### 8.6 Quando Usar Cada Valor de ψ
 
@@ -554,18 +606,79 @@ Ver função `demonstrar_poropressao_negativa()` em validacao.py.
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### 8.7 Comportamento OC em CU: Softening de Coesão
+
+Para modelar o comportamento de argila **sobreconsolidada (OC)** em ensaio CU com
+pico + queda na tensão desviadora, utiliza-se **softening de coesão** ao invés de ψ > 0.
+
+#### Por que softening e não ψ?
+
+| Mecanismo      | CD         | CU                              |
+|----------------|------------|---------------------------------|
+| ψ > 0          | ✅ Funciona | ❌ σ₃' → ∞, sem estado crítico  |
+| Softening c(εp) | ✅ Funciona | ✅ Produz pico + queda           |
+| Softening + ψ  | ✅ Funciona | ❌ ψ domina, softening sem efeito|
+
+#### Implementação
+
+O softening é definido via `sampling_pairs` — uma tabela piecewise linear de
+coesão c em função da deformação plástica equivalente (εp):
+
+```python
+# OC forte: c começa em 40 kPa, se mantém até εp=0.01, decai até 20 kPa em εp=0.05
+sampling_pairs = [[0.0, 40.0], [0.01, 40.0], [0.05, 20.0]]
+```
+
+#### Resultados típicos (CU, σ₃ = 100 kPa, φ = 30°, ψ = 0)
+
+| Configuração          | q_max (kPa) | q_residual (kPa) | Pico? |
+|----------------------|-------------|-------------------|-------|
+| NC (c = 20 const)     | 161.6       | 161.6             | Não   |
+| OC leve (c: 30 → 20) | 182.4       | 161.6             | Sim   |
+| OC forte (c: 40 → 20) | 203.1       | 161.6             | Sim   |
+
+Todos convergem para o mesmo q residual (determinado por φ e c_residual).
+
+Ver gráfico em `comportamento_OC.png`.
+
 ---
 
 ## 9. Fórmulas de Referência
 
 ### Critério de Mohr-Coulomb (tensões efetivas)
+
+**Forma sin/cos (usada no código, compressão positiva):**
+$$\Phi = \sigma_1'(1-\sin\phi') - \sigma_3'(1+\sin\phi') - 2c'\cos\phi' = 0$$
+
+**Forma Kp (equivalente geotécnica):**
 $$f = \sigma_1' - K_p \cdot \sigma_3' - 2c'\sqrt{K_p} = 0$$
 
+**Relações:**
+$$K_p = \frac{1 + \sin\phi'}{1 - \sin\phi'}, \quad \sqrt{K_p} = \frac{\cos\phi'}{1 - \sin\phi'}$$
+
 ### Tensão Desviadora de Ruptura (CD)
-$$q_f = \sigma_3' \cdot (K_p - 1) + 2c'\sqrt{K_p}$$
+$$q_f = \sigma_1' - \sigma_3' = \sigma_3' \cdot (K_p - 1) + 2c'\sqrt{K_p}$$
+
+### Tensão Média Efetiva
+$$p' = \frac{\sigma_1' + 2\sigma_3'}{3}$$
 
 ### Poropressão (CU)
 $$u = \sigma_{3,total} - \sigma_3'$$
 
 ### Resistência Não-Drenada
 $$c_u = \frac{q_{max}}{2}$$
+
+### Propriedades Elásticas
+$$G = \frac{E}{2(1+\nu)}, \quad K = \frac{E}{3(1-2\nu)}$$
+
+### Return Mapping — Resumo de Fórmulas (compressão positiva, unificado para todo ψ)
+
+Ver seção 6 para detalhes. Fórmulas-chave (aplicáveis para ψ = 0 inclusive):
+- $\Delta\gamma = \Phi_{trial} / (a + 4H\cos^2\phi)$ onde $a = 4G(1+\sin\phi\sin\psi/3) + 4K\sin\phi\sin\psi$
+- **Atualização σ₁**: $\sigma_1 = \sigma_1^{trial} - [2G(1-\sin\psi/3) - 2K\sin\psi] \cdot \Delta\gamma$
+- **Atualização σ₃**: $\sigma_3 = \sigma_3^{trial} + [2G(1+\sin\psi/3) + 2K\sin\psi] \cdot \Delta\gamma$
+- **Tendência volumétrica**: $\Delta\varepsilon_v^{p,tend} = -\sin\psi \cdot \Delta\gamma$
+
+> **IMPORTANTE**: Estas são as fórmulas para **compressão positiva** (convenção geotécnica).
+> Os coeficientes de sinψ em σ₁ e σ₃ são invertidos em relação à formulação de Borst (tração positiva).
+> Para ψ = 0 em ensaio triaxial, o 1-vector return viola σ₁ ≥ σ₂ ≥ σ₃ e o 2-vector return é usado automaticamente.

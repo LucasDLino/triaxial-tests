@@ -1,21 +1,24 @@
 """
-Main - Validação do Modelo de Mohr-Coulomb para Ensaios Triaxiais
+Modelo de Mohr-Coulomb — Simulação de Ensaios Triaxiais
+========================================================
 
-Este módulo executa a validação completa do modelo, incluindo:
-- Ensaios CD, CU, UU com validação analítica
-- Hardening e Softening
-- Círculos de Mohr comparativos
+Módulos:
+  mohr_courlomb.py  — Modelo constitutivo (return mapping de Borst/Crisfield)
+  triaxial.py       — Simulação de ensaios (CD, CU, UU)
+  validacao.py      — Verificação numérica (PASS/FAIL) + gráficos
+  utils.py          — Funções auxiliares
 
-Para executar:
-    python main.py
+Uso:
+  python main.py                   → validação completa (testes + gráficos)
+  python main.py --check           → apenas testes PASS/FAIL
+  python main.py --plot            → apenas gráficos (salva PNG)
+  python main.py --plot --show     → gráficos salvos + exibe na tela
 
-Isso chamará automaticamente o módulo validacao.py que contém
-todos os testes unificados.
+Documentação do algoritmo: ALGORITMO_TRIAXIAL.md
 """
 
 from validacao import main as executar_validacao
 
 
 if __name__ == "__main__":
-    # Executa a validação completa
     executar_validacao()
