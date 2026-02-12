@@ -496,146 +496,135 @@ Por isso, calculamos (φ_cu, c_cu) por regressão linear sobre os círculos tota
 
 ---
 
-## 8. O Papel da Dilatância (ψ) nos Diferentes Ensaios
+## 8. Dilatância (ψ), OCR e Softening
 
-### 8.1 O Que é Dilatância?
+### 8.1 Conceitos Básicos
 
-A dilatância (ψ) é um **parâmetro do material** que descreve a tendência do solo de mudar de volume durante cisalhamento plástico:
+**Dilatância (ψ)** — tendência do solo a mudar de volume ao cisalhar plasticamente:
 
-| Valor de ψ | Comportamento | Solo típico |
-|------------|---------------|-------------|
-| ψ > 0 | Dilata (expande) | Areia densa, argila OC |
+| ψ | Efeito | Solo típico |
+|---|--------|-------------|
+| ψ > 0 | Expande (dilata) | Areia densa, argila OC |
 | ψ = 0 | Volume constante | Argila NC, areia fofa |
-| ψ < 0 | Contrai | Solo muito fofo |
 
-### 8.2 Relação entre OCR e Dilatância
+**OCR** (Over-Consolidation Ratio) — razão entre a maior tensão já sofrida e a tensão atual:
 
-O **OCR** (Over-Consolidation Ratio) indica se o solo já foi submetido a tensões maiores que as atuais:
+| OCR | Estado | Comportamento |
+|-----|--------|---------------|
+| ≈ 1 | NC (normalmente consolidado) | Contrai, sem pico em q |
+| 1.5–2 | Levemente OC | Dilata pouco, pico suave |
+| > 4 | Fortemente OC | Dilata bastante, pico pronunciado + queda |
 
-| OCR | Estado | Comportamento típico | ψ sugerido |
-|-----|--------|---------------------|------------|
-| OCR = 1 | Normalmente consolidado (NC) | Contrai ou volume constante | ψ = 0 |
-| OCR = 1.5-2 | Levemente OC | Dilata moderadamente | ψ = φ/3 |
-| OCR > 4 | Fortemente OC | Dilata significativamente | ψ = φ/2 |
+**Softening** — redução de um parâmetro (aqui, coesão *c*) com a deformação plástica acumulada, representando a perda de cimentação ou estrutura do solo.
 
-**IMPORTANTE**: O modelo de Mohr-Coulomb **não captura diretamente** o efeito do OCR. Para modelar solo OC vs NC:
+### 8.2 O Modelo de Mohr-Coulomb NÃO Modela OCR
 
-1. **Abordagem simplificada** (usada aqui): Variar ψ conforme tabela acima
-2. **Abordagem rigorosa**: Usar modelo com cap (Cam-Clay, Cap Model)
+O modelo de Mohr-Coulomb **não tem conceito de histórico de tensões**. Recebe parâmetros constantes (φ, c, ψ, E, ν) e **não existe memória de carregamento prévio** — o modelo não sabe se o solo é NC ou OC.
 
-### 8.3 Dilatância em Cada Tipo de Ensaio
-
-| Ensaio | Volume livre? | Efeito de ψ |
-|--------|---------------|-------------|
-| **CD** | ✅ Sim | ψ controla εᵥ plástico diretamente |
-| **CU** | ❌ Não (εᵥ = 0) | ψ afeta redistribuição de tensões → poropressão |
-| **UU** | ❌ Não (εᵥ = 0) | Mesmo que CU |
-
-### 8.4 Validação com ψ = 0 e ψ ≠ 0
-
-A suite de verificação (`validacao.py`) testa **ambos** os casos:
-
-- **ψ = 0**: Validação analítica contra solução exata de Mohr-Coulomb (q = σ₃(Kp−1) + 2c√Kp)
-- **ψ ≠ 0**: Verifica que q permanece constante (independe de ψ em CD), que εv dilata monotonicamente com ψ, e que Φ(σ_return) = 0
-
-Todos os valores de ψ (incluindo ψ = 0) usam a **mesma formulação de Borst/Crisfield**.
-Para ψ = 0, o 1-vector return cai automaticamente no 2-vector em geometria triaxial
-(ver nota na seção 6.2). Isso garante continuidade do modelo ao variar ψ.
-
-### 8.5 Efeitos Práticos de ψ ≠ 0
-
-**No ensaio CD com ψ > 0** (ver `comparacao_dilatancia.png`, linha superior):
-- O solo dilata durante cisalhamento
-- εᵥ aumenta (expansão volumétrica), proporcional a ψ
-- q permanece ≈ constante (independe de ψ, pois q depende apenas de φ e c)
-- O controle iterativo de σ₃ ajusta ε_r automaticamente
-- **Este efeito é capturado corretamente pelo modelo atual** ✓
-
-**No ensaio CU com ψ > 0** (ver `comparacao_dilatancia.png`, linha inferior):
-
-> **⚠️ LIMITAÇÃO FUNDAMENTAL DO MC COM ψ CONSTANTE EM CU**
->
-> O modelo de Mohr-Coulomb com ψ constante **não possui estado crítico** em CU.
-> O acoplamento dilatante faz σ₃' crescer sem limite, resultando em:
-> - q crescente sem estabilização
-> - u cada vez mais negativo (→ -∞)
->
-> **Isso não é comportamento físico real** — é consequência do modelo.
-
-Mecanismo:
-1. O return mapping calcula `plastic_vol_tendency = -sin(ψ) * dgamma`
-2. Valor negativo = tendência a DILATAR
-3. Em CU (εᵥ = 0), acumulamos essa tendência ao longo do ensaio
-4. Ajuste de poropressão: `Δu_dil = K_coupling * tendência_acumulada`
-5. Onde `K_coupling = 10 * σ3_total` — valor **empírico**
-6. σ₃' = σ₃_total - u cresce sem limite → q = f(σ₃') também cresce
-
-Efeito prático observado nas simulações:
-- ψ = 0: u_final ≈ +54 kPa (NC, positivo, correto)
-- ψ = 2°: u_final ≈ -45 kPa, q ≈ 352 kPa
-- ψ = 5°: u_final ≈ -176 kPa, q ≈ 606 kPa
-
-**Combinar softening + ψ > 0 NÃO resolve o problema**: o efeito de ψ domina
-completamente. Testado: softening c:40→20 + ψ=2° produz resultado **idêntico**
-a ψ=2° sem softening (q_max = q_end = 351.9 kPa).
-
-**Implicação prática**: Para modelar OC em CU (pico + queda), use **softening
-de coesão** com ψ = 0 (seção 8.7). Use ψ ≠ 0 apenas para **ensaios CD**.
-
-### 8.6 Quando Usar Cada Valor de ψ
+Para que o OCR aparecesse automaticamente, seria necessária uma **superfície de cap** (yield locus que endurece com compressão volumétrica plástica). Isso existe em modelos como Cam-Clay e Hardening Soil, mas não no MC.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ GUIA PRÁTICO PARA ESCOLHA DE ψ                              │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Argila NC saturada (OCR ≈ 1):        ψ = 0                │
-│                                                             │
-│  Argila levemente OC (OCR = 1.5-2):   ψ = φ/3              │
-│                                                             │
-│  Argila fortemente OC (OCR > 4):      ψ = φ/2              │
-│                                                             │
-│  Areia fofa:                          ψ = 0                │
-│                                                             │
-│  Areia densa/média:                   ψ = φ/3 a φ/2        │
-│                                                             │
-│  Validação numérica vs analítica:     ψ = 0 (simplifica)   │
-│                                                             │
-│  Plasticidade associada (limite):     ψ = φ (NÃO realista) │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+  Mohr-Coulomb                      Cam-Clay / Modified Cam-Clay
+  ─────────────                      ────────────────────────────
+  Parâmetros: φ, c, ψ, E, ν         Parâmetros: λ, κ, M, e₀, p₀'
+  OCR: não existe                    OCR = p₀'/p' → automático
+  Dilatância: fixa (ψ constante)     Dilatância: emerge do modelo
+  Pico+queda: só via softening       Pico+queda: natural para OCR > 1
 ```
 
-### 8.7 Comportamento OC em CU: Softening de Coesão
+**Consequência**: no MC, o usuário deve "injetar" manualmente os efeitos do OCR via parâmetros. As duas ferramentas disponíveis são **ψ** e **softening**.
 
-Para modelar o comportamento de argila **sobreconsolidada (OC)** em ensaio CU com
-pico + queda na tensão desviadora, utiliza-se **softening de coesão** ao invés de ψ > 0.
+### 8.3 Ferramenta 1: Dilatância (ψ)
 
-#### Por que softening e não ψ?
+A dilatância plástica é $\Delta\varepsilon_v^p = -\sin\psi \cdot \Delta\gamma$.
 
-| Mecanismo      | CD         | CU                              |
-|----------------|------------|---------------------------------|
-| ψ > 0          | ✅ Funciona | ❌ σ₃' → ∞, sem estado crítico  |
-| Softening c(εp) | ✅ Funciona | ✅ Produz pico + queda           |
-| Softening + ψ  | ✅ Funciona | ❌ ψ domina, softening sem efeito|
+#### Em ensaio CD (drenado) — ✅ Funciona
 
-#### Implementação
+O solo pode mudar de volume livremente. Com ψ > 0, εᵥ torna-se negativo (expansão), proporcional a ψ. A tensão desviadora q permanece a mesma (depende só de φ e c), pois σ₃' é controlado. Ver `comparacao_dilatancia.png`, linha superior.
 
-O softening é definido via `sampling_pairs` — uma tabela piecewise linear de
-coesão c em função da deformação plástica equivalente (εp):
+#### Em ensaio CU (não-drenado) — ⚠️ Problemático
+
+Em CU, εᵥ = 0. A tendência dilatante é convertida em variação de poropressão via acoplamento empírico (`K_coupling = 10·σ₃`). O problema: **o MC com ψ constante não tem estado crítico em CU**. Na natureza, ψ decai até zero no estado crítico, estabilizando σ₃' e u. Aqui, ψ nunca decai, então:
+
+- σ₃' cresce sem limite (u → -∞)
+- q cresce sem limite (não estabiliza)
+- Não há pico + queda
+
+Valores observados (σ₃ = 100 kPa):
+
+| ψ | q_final (kPa) | u_final (kPa) |
+|---|---------------|----------------|
+| 0° | 161.6 | +53.9 |
+| 2° | 351.9 | -44.5 |
+| 5° | 605.9 | -175.7 |
+
+Ao combinar softening + ψ > 0 em CU, o efeito de ψ **domina completamente** — os resultados ficam idênticos com ou sem softening.
+
+**Conclusão**: ψ > 0 serve para CD. Para CU, usar softening (seção 8.4).
+
+### 8.4 Ferramenta 2: Softening de Coesão c(εp)
+
+O softening modela a **perda de resistência** do solo OC ao ser cisalhado. A coesão começa alta (resistência de pico) e decai até um valor residual via tabela piecewise linear:
 
 ```python
-# OC forte: c começa em 40 kPa, se mantém até εp=0.01, decai até 20 kPa em εp=0.05
+# Exemplo: c começa em 40 kPa, plateau até εp=1%, decai até 20 kPa em εp=5%
 sampling_pairs = [[0.0, 40.0], [0.01, 40.0], [0.05, 20.0]]
 ```
 
-#### Resultados típicos (CU, σ₃ = 100 kPa, φ = 30°, ψ = 0)
+#### Em CD — ✅ Funciona
 
-| Configuração          | q_max (kPa) | q_residual (kPa) | Pico? |
-|----------------------|-------------|-------------------|-------|
-| NC (c = 20 const)     | 161.6       | 161.6             | Não   |
-| OC leve (c: 30 → 20) | 182.4       | 161.6             | Sim   |
-| OC forte (c: 40 → 20) | 203.1       | 161.6             | Sim   |
+q atinge pico (c alto) e decai até q residual (c residual). Ver seção de validação (teste 7).
+
+#### Em CU — ✅ Funciona (com ψ = 0)
+
+Produz o comportamento clássico de argila OC: pico de q seguido de queda, com todas as curvas convergindo para o mesmo residual.
+
+Resultados (CU, σ₃ = 100 kPa, φ = 30°, ψ = 0):
+
+| Configuração | q_max | q_residual | Pico + queda? |
+|-------------|-------|------------|---------------|
+| NC (c = 20 const) | 161.6 | 161.6 | Não |
+| OC leve (c: 30 → 20) | 182.4 | 161.6 | Sim |
+| OC forte (c: 40 → 20) | 203.1 | 161.6 | Sim |
+
+Ver gráfico em `comportamento_OC.png`.
+
+### 8.5 Resumo: O Que Usar em Cada Situação
+
+| Quero simular... | Em CD | Em CU |
+|-------------------|-------|-------|
+| Dilatância (expansão volumétrica) | ψ > 0 ✅ | ψ > 0 ⚠️ (sem estado crítico) |
+| Pico + queda de q (OC) | Softening c(εp) ✅ | Softening c(εp) com ψ=0 ✅ |
+| Solo NC (sem efeitos OC) | ψ = 0, c constante | ψ = 0, c constante |
+
+**Guia rápido para escolha de ψ (apenas CD)**:
+
+| Solo | ψ sugerido |
+|------|------------|
+| Argila NC (OCR ≈ 1) | 0 |
+| Argila lev. OC (OCR 1.5–2) | φ/3 |
+| Argila fort. OC (OCR > 4) | φ/2 |
+| Areia fofa | 0 |
+| Areia densa | φ/3 a φ/2 |
+
+### 8.6 Validação Numérica
+
+A suite de verificação (`validacao.py`) testa:
+
+- **ψ = 0**: q ≈ solução analítica (q = σ₃(Kp−1) + 2c√Kp), εᵥ > 0 (contração elástica)
+- **ψ ≠ 0 em CD**: q constante (independe de ψ), εᵥ dilata monotonicamente com ψ, Φ(σ_return) = 0
+- **Softening em CD**: pico + queda com valores esperados
+- **CU com ψ > 0**: verifica estabilidade (não diverge), mas sem validação quantitativa (K_coupling empírico)
+
+Todos os valores de ψ usam a **mesma formulação de Borst/Crisfield**.
+Para ψ = 0, o 1-vector return cai automaticamente no 2-vector em geometria triaxial (ver seção 6.2).
+
+### 8.7 Gráficos Gerados
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| `comparacao_dilatancia.png` | Efeito de ψ: CD (q, εv) + CU (q, u) |
+| `comportamento_OC.png` | NC vs OC via softening em CU (q, u) |
 
 Todos convergem para o mesmo q residual (determinado por φ e c_residual).
 
