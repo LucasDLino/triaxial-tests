@@ -228,18 +228,20 @@ class TriaxialTest:
                 # =====================================================================
                 # ENSAIO CD: Controle iterativo para manter σ3' = constante
                 # =====================================================================
-                # Usar subpassos com correção proporcional limitada
+                # Usar MUITOS subpassos com correção proporcional limitada
                 # =====================================================================
                 sigma3_target = self.sigma3_effective
                 
-                # Dividir em 10 subpassos por passo principal para melhor precisão
-                n_sub = 10
+                # Muitos subpassos para estabilidade com hardening/softening
+                n_sub = 20
                 d_eps_sub = d_eps / n_sub
                 
-                # Estimar eps_r inicial baseado no estado atual
-                eps_r_base = -self.model.nu * d_eps_sub
+                # Manter valor de eps_r entre subpassos (continuidade)
+                if not hasattr(self, '_eps_r_history'):
+                    self._eps_r_history = -self.model.nu * d_eps_sub
+                eps_r_base = self._eps_r_history
                 
-                for _ in range(n_sub):
+                for sub_idx in range(n_sub):
                     # Salvar estado para possível rollback
                     strain_backup = self.total_strain.copy()
                     model_backup = {
@@ -264,7 +266,7 @@ class TriaxialTest:
                     erro = sigma3_atual - sigma3_target
                     
                     # Correção iterativa (máximo 10 iterações)
-                    for _ in range(10):
+                    for iter_count in range(10):
                         if abs(erro) < 0.1:  # Tolerância 0.1 kPa
                             break
                         
@@ -277,13 +279,22 @@ class TriaxialTest:
                         
                         # Correção de εr: se σ3 > target, precisamos de menos contração (εr mais positivo)
                         # Usar sensibilidade elástica: dσ3/dεr ≈ 2G (para regime elástico)
-                        # No regime plástico, sensibilidade é menor
+                        # No regime plástico, sensibilidade é MUITO menor para evitar oscilações
                         G = self.model.E / (2 * (1 + self.model.nu))
-                        sensitivity = 2 * G * (1 if not self.model.is_plastic else 0.3)
+                        
+                        # Fator de relaxação progressivo para garantir convergência
+                        relaxation = 0.5 / (1 + iter_count * 0.2)  # Diminui a cada iteração
+                        
+                        if self.model.is_plastic:
+                            # Plástico: usar sensibilidade muito baixa
+                            sensitivity = 2 * G * 0.1 * relaxation
+                        else:
+                            sensitivity = 2 * G * relaxation
+                            
                         delta_eps_r = -erro / sensitivity
                         
-                        # Limitar correção para estabilidade
-                        max_corr = 0.5 * abs(d_eps_sub)
+                        # Limitar correção para estabilidade - mais conservador
+                        max_corr = 0.3 * abs(d_eps_sub)
                         delta_eps_r = np.clip(delta_eps_r, -max_corr, max_corr)
                         eps_r_base = eps_r_base + delta_eps_r
                         
@@ -298,6 +309,9 @@ class TriaxialTest:
                         
                         sigma3_atual = np.min(np.linalg.eigvalsh(stress))
                         erro = sigma3_atual - sigma3_target
+                
+                # Guardar eps_r para próximo passo (continuidade)
+                self._eps_r_history = eps_r_base
             else:
                 # CU/UU: usar método original (volume constante)
                 eps_r = self.get_radial_strain(d_eps)
@@ -380,13 +394,15 @@ class TriaxialTest:
             eps_v_total = np.trace(self.total_strain)
             eps_v_incremental = eps_v_total - eps_v_inicial
             
-            # AJUSTE: Armazenar resultados expandidos
+            # AJUSTE: Armazenar resultados - tensões EFETIVAS
+            # O modelo constitutivo trabalha com tensões efetivas
+            # As tensões totais podem ser calculadas: σ_total = σ' + u
             self.axial_strain.append((i + 1) * d_eps)
             self.q.append(q)
             self.p.append(p_prime)
             self.volumetric_strain.append(eps_v_incremental)
-            self.sigma1.append(sigma1_total)
-            self.sigma3.append(sigma3_total)
+            self.sigma1.append(sigma1_prime)  # Tensão EFETIVA
+            self.sigma3.append(sigma3_prime)  # Tensão EFETIVA
             self.pore_pressure.append(u)
             
             # Proteção contra divisão por zero nas normalizações

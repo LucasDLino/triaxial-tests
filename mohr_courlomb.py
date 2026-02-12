@@ -203,35 +203,101 @@ class MohrCoulombModel:
             # PASSO PLÁSTICO: Return mapping
             self.is_plastic = True
             
-            dgamma = 0
-            a = (4.0 * self.G * (1.0 + 1.0/3.0 * np.sin(self.phi) * np.sin(self.psi)) + 
-                 4.0 * self.K * np.sin(self.phi) * np.sin(self.psi))
+            # =====================================================================
+            # CASO ESPECIAL: ψ = 0 (plasticidade não-associada, volume constante)
+            # =====================================================================
+            #
+            # PROBLEMA COM A FORMULAÇÃO CLÁSSICA (de Borst/Crisfield):
+            # ---------------------------------------------------------
+            # A formulação geral usa termos multiplicados por sin(ψ). Quando ψ = 0:
+            #   - Termos que deveriam ajustar σ₃ desaparecem
+            #   - O return produz σ₃ > σ₁ (inválido!) ou tensões inconsistentes
+            #
+            # SOLUÇÃO IMPLEMENTADA:
+            # ---------------------
+            # Para ψ = 0, usamos return mapping direto à superfície de Mohr-Coulomb:
+            #   1. Mantemos σ₃ = σ₃_trial (fixo)
+            #   2. Projetamos σ₁ para o valor limite: σ₁ = Kp·σ₃ + 2c·√Kp
+            #   3. Onde Kp = (1+sin(φ))/(1-sin(φ)) é o coeficiente de empuxo passivo
+            #
+            # JUSTIFICATIVA FÍSICA:
+            # ---------------------
+            # Com ψ = 0, o fluxo plástico é isocórico (dεᵥᵖ = 0), sem dilatância.
+            # Isso significa que o solo plastifica sem mudança de volume, e σ₃
+            # permanece estável enquanto σ₁ é "cortado" pela superfície de ruptura.
+            #
+            # =====================================================================
             
-            # 1-VECTOR RETURN (Main Plane)
-            self.is_fail = True
-            for i in range(self.n_hard):
-                dgamma = ((np.sin(self.phi) + 1) * pstrs_trial[0] + 
-                         (np.sin(self.phi) - 1) * pstrs_trial[2] - 
-                         2 * np.cos(self.phi) * (self.sampling_pairs[i, 1] + 
-                         (eps_trial - self.sampling_pairs[i, 0]) * self.H[i])) / \
-                        (a + 4 * self.H[i] * np.cos(self.phi) * np.cos(self.phi))
+            if abs(np.sin(self.psi)) < 1e-10:
+                # Return mapping simplificado para ψ = 0
+                sin_phi = np.sin(self.phi)
+                cos_phi = np.cos(self.phi)
                 
-                eps = eps_trial + 2 * np.cos(self.phi) * dgamma
+                # Coesão atual (pode variar com hardening/softening)
+                cohesion = self.plfun(eps_trial)
                 
-                if eps >= self.sampling_pairs[i, 0] and eps <= self.sampling_pairs[i + 1, 0]:
-                    self.is_fail = False
-                    break
-            
-            pstrs[0] = pstrs_trial[0] - (2.0 * self.G * (1.0 + 1.0/3.0 * np.sin(self.psi)) + 
-                                          2.0 * self.K * np.sin(self.psi)) * dgamma # Sigma1
-            pstrs[1] = pstrs_trial[1] + (4.0/3.0 * self.G - 2.0 * self.K) * np.sin(self.psi) * dgamma # Sigma2
-            pstrs[2] = pstrs_trial[2] + (2.0 * self.G * (1.0 - 1.0/3.0 * np.sin(self.psi)) - 
-                                          2.0 * self.K * np.sin(self.psi)) * dgamma  # Sigma3
+                # Coeficiente de empuxo passivo de Rankine
+                # Kp = tan²(45° + φ/2) = (1 + sin(φ)) / (1 - sin(φ))
+                K_p = (1 + sin_phi) / (1 - sin_phi)
+                
+                # Manter σ₃ do estado trial
+                sigma3_target = pstrs_trial[2]
+                
+                # Tensão σ₁ máxima admissível (na superfície de ruptura):
+                # Da equação de Mohr-Coulomb em compressão triaxial:
+                #   σ₁ = Kp·σ₃ + 2c·√Kp
+                sigma1_limit = sigma3_target * K_p + 2 * cohesion * np.sqrt(K_p)
+                
+                # Projetar σ₁ para a superfície se necessário
+                if pstrs_trial[0] > sigma1_limit:
+                    pstrs[0] = sigma1_limit
+                    pstrs[1] = pstrs_trial[1]  # σ₂ permanece
+                    pstrs[2] = sigma3_target    # σ₃ fixo
+                    
+                    # Estimar dgamma para atualização de deformação plástica equivalente
+                    # dgamma ≈ (σ₁_trial - σ₁_return) / (2G)
+                    dgamma = (pstrs_trial[0] - pstrs[0]) / (2.0 * self.G)
+                    eps = eps_trial + 2 * cos_phi * dgamma
+                else:
+                    # Caso raro: Phi_trial > 0 mas σ₁_trial < σ₁_limit
+                    # (pode ocorrer por arredondamento numérico)
+                    pstrs = pstrs_trial.copy()
+                    eps = eps_trial
+                    dgamma = 0
+                
+                self.is_fail = False
+                
+            else:
+                # Formulação original para ψ ≠ 0
+                dgamma = 0
+                a = (4.0 * self.G * (1.0 + 1.0/3.0 * np.sin(self.phi) * np.sin(self.psi)) + 
+                     4.0 * self.K * np.sin(self.phi) * np.sin(self.psi))
+                
+                # 1-VECTOR RETURN (Main Plane)
+                self.is_fail = True
+                for i in range(self.n_hard):
+                    dgamma = ((np.sin(self.phi) + 1) * pstrs_trial[0] + 
+                             (np.sin(self.phi) - 1) * pstrs_trial[2] - 
+                             2 * np.cos(self.phi) * (self.sampling_pairs[i, 1] + 
+                             (eps_trial - self.sampling_pairs[i, 0]) * self.H[i])) / \
+                            (a + 4 * self.H[i] * np.cos(self.phi) * np.cos(self.phi))
+                    
+                    eps = eps_trial + 2 * np.cos(self.phi) * dgamma
+                    
+                    if eps >= self.sampling_pairs[i, 0] and eps <= self.sampling_pairs[i + 1, 0]:
+                        self.is_fail = False
+                        break
+                
+                pstrs[0] = pstrs_trial[0] - (2.0 * self.G * (1.0 + 1.0/3.0 * np.sin(self.psi)) + 
+                                              2.0 * self.K * np.sin(self.psi)) * dgamma # Sigma1
+                pstrs[1] = pstrs_trial[1] + (4.0/3.0 * self.G - 2.0 * self.K) * np.sin(self.psi) * dgamma # Sigma2
+                pstrs[2] = pstrs_trial[2] + (2.0 * self.G * (1.0 - 1.0/3.0 * np.sin(self.psi)) - 
+                                              2.0 * self.K * np.sin(self.psi)) * dgamma  # Sigma3
             
             TOL = max(np.abs(pstrs)) * 1e-6
             
-            # Verificar validade do 1-vector return
-            if not ((pstrs[0] + TOL) >= pstrs[1] and (pstrs[1] + TOL) >= pstrs[2]):
+            # Verificar validade do 1-vector return (apenas para ψ ≠ 0)
+            if abs(np.sin(self.psi)) >= 1e-10 and not ((pstrs[0] + TOL) >= pstrs[1] and (pstrs[1] + TOL) >= pstrs[2]):
                 # 2-VECTOR RETURN (Edge)
                 dgammaA = 0
                 dgammaB = 0

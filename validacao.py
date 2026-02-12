@@ -31,9 +31,9 @@ def validar_cd(E, nu, phi_deg, cohesion, psi_deg, sigma3):
     q_teo = sigma3 * (Nf - 1) + 2 * cohesion * np.sqrt(Nf)
     sigma1_teo = sigma3 * Nf + 2 * cohesion * np.sqrt(Nf)
     
-    print(f"\nParâmetros: E={E} kPa, ν={nu}, φ={phi_deg}°, c={cohesion} kPa, ψ={psi_deg}°")
-    print(f"σ₃ = {sigma3} kPa")
-    print(f"\nSolução analítica: σ₁ = {sigma1_teo:.1f} kPa, q = {q_teo:.1f} kPa")
+    print(f"\nParametros: E={E} kPa, nu={nu}, phi={phi_deg} graus, c={cohesion} kPa, psi={psi_deg} graus")
+    print(f"sigma3 = {sigma3} kPa")
+    print(f"\nSolucao analitica: sigma1 = {sigma1_teo:.1f} kPa, q = {q_teo:.1f} kPa")
     
     model = MohrCoulombModel(E=E, nu=nu, phi_deg=phi_deg, cohesion=cohesion, psi_deg=psi_deg)
     test = TriaxialTest(model, sigma3=sigma3, test_type='CD')
@@ -45,10 +45,10 @@ def validar_cd(E, nu, phi_deg, cohesion, psi_deg, sigma3):
     sigma3_range = (min(r['sigma3']), max(r['sigma3']))
     erro = 100 * abs(q_max - q_teo) / q_teo
     
-    print(f"Simulação:         σ₁ = {max(r['sigma1']):.1f} kPa, q = {q_max:.1f} kPa")
+    print(f"Simulacao:         sigma1 = {max(r['sigma1']):.1f} kPa, q = {q_max:.1f} kPa")
     print(f"Erro: {erro:.1f}%")
-    print(f"σ₃ durante ensaio: {sigma3_range[0]:.1f} - {sigma3_range[1]:.1f} kPa")
-    print(f"Pico em εₐ = {eps_peak:.1f}%")
+    print(f"sigma3 durante ensaio: {sigma3_range[0]:.1f} - {sigma3_range[1]:.1f} kPa")
+    print(f"Pico em eps_a = {eps_peak:.1f}%")
     
     return r, q_teo
 
@@ -56,10 +56,10 @@ def validar_cd(E, nu, phi_deg, cohesion, psi_deg, sigma3):
 def validar_cu(E, nu, phi_deg, cohesion, psi_deg, sigma3):
     """Valida ensaio CU - geração de poropressão."""
     print("\n" + "="*60)
-    print("ENSAIO CU (CONSOLIDADO NÃO-DRENADO)")
+    print("ENSAIO CU (CONSOLIDADO NAO-DRENADO)")
     print("="*60)
     
-    print(f"\nParâmetros: σ₃ = {sigma3} kPa")
+    print(f"\nParametros: sigma3 = {sigma3} kPa")
     
     model = MohrCoulombModel(E=E, nu=nu, phi_deg=phi_deg, cohesion=cohesion, psi_deg=psi_deg)
     test = TriaxialTest(model, sigma3=sigma3, test_type='CU')
@@ -68,9 +68,9 @@ def validar_cu(E, nu, phi_deg, cohesion, psi_deg, sigma3):
     q_max = max(r['q'])
     u_max = max(r['pore_pressure'])
     
-    print(f"Resistência: q_máx = {q_max:.1f} kPa")
-    print(f"Poropressão gerada: Δu = {u_max:.1f} kPa")
-    print(f"Razão u/σ₃ = {u_max/sigma3:.2f}")
+    print(f"Resistencia: q_max = {q_max:.1f} kPa")
+    print(f"Poropressao gerada: delta_u = {u_max:.1f} kPa")
+    print(f"Razao u/sigma3 = {u_max/sigma3:.2f}")
     
     return r
 
@@ -78,10 +78,10 @@ def validar_cu(E, nu, phi_deg, cohesion, psi_deg, sigma3):
 def validar_uu(E, nu, phi_deg, cohesion, psi_deg, sigma3_list):
     """Valida ensaio UU - cu independente de σ₃."""
     print("\n" + "="*60)
-    print("ENSAIO UU (NÃO-CONSOLIDADO NÃO-DRENADO)")
+    print("ENSAIO UU (NAO-CONSOLIDADO NAO-DRENADO)")
     print("="*60)
     
-    print("\nVerificando independência de cu em relação a σ₃:")
+    print("\nVerificando independencia de cu em relacao a sigma3:")
     
     resultados_uu = []
     for sigma3 in sigma3_list:
@@ -90,14 +90,14 @@ def validar_uu(E, nu, phi_deg, cohesion, psi_deg, sigma3_list):
         r = test.run(eps_max=0.10, steps=50)
         q_max = max(r['q'])
         cu = q_max / 2
-        print(f"  σ₃ = {sigma3:3d} kPa → q = {q_max:.1f} kPa, cu = {cu:.1f} kPa")
+        print(f"  sigma3 = {sigma3:3d} kPa -> q = {q_max:.1f} kPa, cu = {cu:.1f} kPa")
         resultados_uu.append((sigma3, r))
     
     # Verificar se cu é constante
     q_values = [max(r['q']) for _, r in resultados_uu]
     variacao = max(q_values) - min(q_values)
-    print(f"\nVariação de q: {variacao:.2f} kPa")
-    print(f"cu independe de σ₃: {variacao < 1}")
+    print(f"\nVariacao de q: {variacao:.2f} kPa")
+    print(f"cu independe de sigma3: {variacao < 1}")
     
     return resultados_uu
 
@@ -112,8 +112,8 @@ def validar_hardening(E, nu, phi_deg, psi_deg, sigma3):
     c_final = 50
     eps_p_final = 0.05
     
-    print(f"\nCoesão evolui de {c_inicial} → {c_final} kPa")
-    print(f"Deformação plástica para atingir máximo: {eps_p_final*100}%")
+    print(f"Coesao evolui de {c_inicial} -> {c_final} kPa")
+    print(f"Deformacao plastica para atingir maximo: {eps_p_final*100}%")
     
     sampling_pairs = [[0.0, c_inicial], [eps_p_final, c_final]]
     
@@ -129,7 +129,7 @@ def validar_hardening(E, nu, phi_deg, psi_deg, sigma3):
     
     print(f"\nResultados:")
     print(f"  q inicial = {q_inicial:.1f} kPa")
-    print(f"  q máximo  = {q_final:.1f} kPa")
+    print(f"  q maximo  = {q_final:.1f} kPa")
     print(f"  Aumento: {(q_final/q_inicial - 1)*100:.0f}%")
     
     return r
@@ -146,7 +146,7 @@ def validar_softening(E, nu, phi_deg, psi_deg, sigma3):
     eps_p_pico = 0.01
     eps_p_residual = 0.05
     
-    print(f"\nCoesão evolui de {c_pico} → {c_residual} kPa após pico")
+    print(f"Coesao evolui de {c_pico} -> {c_residual} kPa apos pico")
     
     sampling_pairs = [
         [0.0, c_pico],
@@ -168,9 +168,9 @@ def validar_softening(E, nu, phi_deg, psi_deg, sigma3):
     eps_peak = r['axial_strain'][idx_peak] * 100
     
     print(f"\nResultados:")
-    print(f"  q pico     = {q_peak:.1f} kPa (em εₐ = {eps_peak:.1f}%)")
+    print(f"  q pico     = {q_peak:.1f} kPa (em eps_a = {eps_peak:.1f}%)")
     print(f"  q residual = {q_residual:.1f} kPa")
-    print(f"  Redução: {(1 - q_residual/q_peak)*100:.0f}%")
+    print(f"  Reducao: {(1 - q_residual/q_peak)*100:.0f}%")
     
     return r
 
@@ -354,7 +354,7 @@ def plotar_circulos_mohr_comparativo(r_cd_list, r_cu_list, r_uu, phi_deg, cohesi
     
     plt.tight_layout()
     plt.savefig('circulos_mohr_comparativo.png', dpi=150, bbox_inches='tight')
-    print(f"Gráfico salvo: circulos_mohr_comparativo.png")
+    print(f"Grafico salvo: circulos_mohr_comparativo.png")
     plt.show()
 
 
@@ -447,31 +447,31 @@ def plotar_resultados(r_cd, r_cu, r_uu, r_hard, r_soft, q_teo_cd, sigma3):
     
     plt.tight_layout()
     plt.savefig('validacao_completa.png', dpi=150, bbox_inches='tight')
-    print(f"\nGráfico salvo: validacao_completa.png")
+    print(f"\nGrafico salvo: validacao_completa.png")
     plt.show()
 
 
 def main():
-    """Executa validação completa."""
+    """Executa validacao completa."""
     print("\n" + "="*60)
-    print("VALIDAÇÃO COMPLETA DO MODELO MOHR-COULOMB")
+    print("VALIDACAO COMPLETA DO MODELO MOHR-COULOMB")
     print("="*60)
     
-    # Parâmetros padrão
+    # Parametros padrao
     E = 25000       # kPa
     nu = 0.3
     phi_deg = 25    # graus
     cohesion = 20   # kPa
-    psi_deg = 0     # NÃO-ASSOCIADO (mais realista para solos)
+    psi_deg = 0     # NAO-ASSOCIADO (mais realista para solos)
     sigma3 = 50     # kPa
     
-    print(f"\nParâmetros base:")
+    print(f"\nParametros base:")
     print(f"  E = {E} kPa")
-    print(f"  ν = {nu}")
-    print(f"  φ = {phi_deg}°")
+    print(f"  nu = {nu}")
+    print(f"  phi = {phi_deg} graus")
     print(f"  c = {cohesion} kPa")
-    print(f"  ψ = {psi_deg}° (não-associado)")
-    print(f"  σ₃ = {sigma3} kPa")
+    print(f"  psi = {psi_deg} graus (nao-associado)")
+    print(f"  sigma3 = {sigma3} kPa")
     
     # Validações
     # Múltiplas tensões de confinamento para visualização
@@ -499,20 +499,20 @@ def main():
     
     # Resumo
     print("\n" + "="*60)
-    print("RESUMO DA VALIDAÇÃO")
+    print("RESUMO DA VALIDACAO")
     print("="*60)
-    print("\n✓ CD: Erro < 5% vs solução analítica")
-    print("✓ CU: Geração de poropressão verificada")
-    print("✓ UU: cu independente de σ₃")
-    print("✓ Hardening: Aumento progressivo de q")
-    print("✓ Softening: Redução de resistência pós-pico")
+    print("\n[OK] CD: Erro < 5% vs solucao analitica")
+    print("[OK] CU: Geracao de poropressao verificada")
+    print("[OK] UU: cu independente de sigma3")
+    print("[OK] Hardening: Aumento progressivo de q")
+    print("[OK] Softening: Reducao de resistencia pos-pico")
     
     # Gráficos
     plotar_resultados(r_cd, r_cu, r_uu, r_hard, r_soft, q_teo, sigma3)
     plotar_circulos_mohr_comparativo(r_cd_list, r_cu_list, r_uu, phi_deg, cohesion)
     
     print("\n" + "="*60)
-    print("VALIDAÇÃO CONCLUÍDA COM SUCESSO!")
+    print("VALIDACAO CONCLUIDA COM SUCESSO!")
     print("="*60)
 
 
